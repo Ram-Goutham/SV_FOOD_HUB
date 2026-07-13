@@ -91,7 +91,7 @@ img{max-width:100%;display:block;}
   pointer-events:auto !important;
   height:auto;overflow:visible;margin:0 auto;padding:16px;
 }
-#view-menu, #view-select, #view-order-customer{padding-bottom:100px;}
+#view-menu, #view-select, #view-order-customer, #view-orders, #view-cart, #view-reports,#view-customers,#view-dashboard {padding-bottom:100px;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
 
 .flow-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
@@ -332,7 +332,7 @@ img{max-width:100%;display:block;}
       <span>Restaurant POS</span>
     </div>
   </div>
-  <button class="cart-fab" onclick="Nav.go('cart')">
+  <button class="cart-fab" onclick="Nav.go('orders')">
     🛒<span class="cart-badge" id="cartBadge">0</span>
   </button>
 </div>
@@ -344,7 +344,7 @@ img{max-width:100%;display:block;}
     <div class="welcome-date" id="liveDateTime">—</div>
   </div>
 
-  <button class="btn btn-primary btn-block start-order-btn" onclick="Nav.go('order-customer')">🛍️ Start New Order</button>
+  <button class="btn btn-primary btn-block start-order-btn" onclick="OrdersUI.startNew()">🛍️ Start New Order</button>
 
   <div class="stat-grid">
     <div class="stat-card"><div class="label">Today's Orders</div><div class="value" id="statTodayOrders">0</div></div>
@@ -415,6 +415,16 @@ img{max-width:100%;display:block;}
 
 
 <!-- CART -->
+<!-- ORDERS TAB (list of in-progress orders) -->
+<div class="view" id="view-orders">
+  <button class="btn btn-primary btn-block" style="margin-bottom:16px;" onclick="OrdersUI.startNew()">🛍️ Start New Order</button>
+  <div class="filter-row" style="display:flex;gap:8px;margin-bottom:14px;">
+    <div class="diet-filter-chip all active" id="ordersFilterProgress" onclick="OrdersUI.setTab('draft')">In Progress</div>
+    <div class="diet-filter-chip all" id="ordersFilterCompleted" onclick="OrdersUI.setTab('completed')">Completed</div>
+  </div>
+  <div id="ordersListWrap"></div>
+</div>
+
 <div class="view" id="view-cart">
   <div class="flow-header">
     <div class="flow-back" onclick="Nav.go('select')">←</div>
@@ -494,7 +504,7 @@ img{max-width:100%;display:block;}
 <div class="bottom-nav">
   <div class="nav-item active" data-view="dashboard" onclick="Nav.go('dashboard')"><span class="ni-icon">📊</span>Dashboard</div>
   <div class="nav-item" data-view="menu" onclick="Nav.go('menu')"><span class="ni-icon">🍔</span>Menu</div>
-  <div class="nav-item" data-view="cart" onclick="Nav.go('cart')"><span class="ni-icon">🛒</span>Cart</div>
+  <div class="nav-item" data-view="orders" onclick="Nav.go('orders')"><span class="ni-icon">🧾</span>Orders</div>
   <div class="nav-item" data-view="customers" onclick="Nav.go('customers')"><span class="ni-icon">👥</span>Customers</div>
   <div class="nav-item" data-view="reports" onclick="Nav.go('reports')"><span class="ni-icon">📁</span>Reports</div>
 </div>
@@ -602,6 +612,7 @@ const Nav = {
     if(view==='select') SelectUI.render();
     if(view==='customers') CustomerUI.render();
     if(view==='cart') CartUI.render();
+    if(view==='orders') OrdersUI.render();
   }
 };
 
@@ -805,7 +816,7 @@ function pdfImageFormat(dataUrl){
 
 const Dashboard = {
   async render(){
-    const orders = await Store.getAll('orders');
+    const orders = (await Store.getAll('orders')).filter(o=> o.status !== 'draft');
     const customers = await Store.getAll('customers');
     const today = todayStr();
     const todayOrders = orders.filter(o=> o.date === today);
@@ -844,7 +855,27 @@ function escapeHtml(str){
    MENU (Food Items) - CRUD + Cart Add
    ========================================================= */
 let menuCache = [];
-const Cart = { items: {}, customer: null, payment: 'Cash' }; // items keyed by menuId -> {item, qty}
+const Cart = { items: {}, customer: null, payment: 'Cash', orderId: null }; // items keyed by menuId -> {item, qty}; orderId links to the specific draft order record being edited
+
+// Persists the in-progress order to its OWN record (Cart.orderId) so editing one
+// order never touches another order's data or the revenue totals.
+async function saveDraft(){
+  if(!Cart.orderId) return;
+  const entries = Object.entries(Cart.items);
+  const subtotal = entries.reduce((s,[,c])=> s + c.item.price*c.qty, 0);
+  await Store.put('orders', {
+    id: Cart.orderId,
+    status: 'draft',
+    customerId: Cart.customer ? Cart.customer.id : null,
+    customerName: Cart.customer ? Cart.customer.name : '',
+    customerPhone: Cart.customer ? Cart.customer.phone : '',
+    customerArea: Cart.customer ? (Cart.customer.area||'') : '',
+    items: entries.map(([id,c])=> ({id:Number(id), name:c.item.name, price:c.item.price, qty:c.qty, dietType:c.item.dietType||'veg'})),
+    subtotal,
+    payment: Cart.payment,
+    timestamp: Date.now()
+  });
+}
 
 const MenuUI = {
   filterType: 'all',
@@ -1068,6 +1099,7 @@ const SelectUI = {
     } else {
       Cart.items[id] = {item, qty};
     }
+    saveDraft();
     this._pendingQty[id] = 0;
     updateCartBadge();
     Toast.show(item.name+' added to cart');
@@ -1134,6 +1166,7 @@ const CartUI = {
     if(Cart.items[id].qty <= 0) delete Cart.items[id];
     updateCartBadge();
     CartUI.render();
+    saveDraft();
   },
 
   renderSummary(){
@@ -1149,6 +1182,7 @@ const CartUI = {
     Cart.payment = method;
     document.getElementById('payCash').classList.toggle('active', method==='Cash');
     document.getElementById('payUPI').classList.toggle('active', method==='UPI');
+    saveDraft();
   },
 
   async searchCustomer(q){
@@ -1174,11 +1208,127 @@ const CartUI = {
     document.getElementById('cartCustomerSearch').value='';
     document.getElementById('cartCustomerResults').innerHTML='';
     CartUI.render();
+    saveDraft();
   },
 
   clearCustomer(){
     Cart.customer = null;
     CartUI.render();
+    saveDraft();
+  }
+};
+
+/* =========================================================
+   ORDERS TAB - list of in-progress (draft) orders. This is what
+   the bottom-nav "Orders" tab opens (replacing direct Cart access).
+   Only orders marked status:'draft' show here; finalized invoices
+   are status:'completed' and never editable/deletable from here,
+   so they can't accidentally be double-counted in revenue.
+   ========================================================= */
+const OrdersUI = {
+  tab: 'draft',
+
+  setTab(tab){
+    OrdersUI.tab = tab;
+    document.getElementById('ordersFilterProgress').classList.toggle('active', tab==='draft');
+    document.getElementById('ordersFilterCompleted').classList.toggle('active', tab==='completed');
+    OrdersUI.render();
+  },
+
+  async startNew(){
+    const draft = {status:'draft', customerId:null, customerName:'', customerPhone:'', customerArea:'', items:[], subtotal:0, payment:'Cash', timestamp:Date.now()};
+    const id = await Store.add('orders', draft);
+    Cart.orderId = id;
+    Cart.items = {};
+    Cart.customer = null;
+    Cart.payment = 'Cash';
+    updateCartBadge();
+    Nav.go('order-customer');
+  },
+
+  async render(){
+    if(OrdersUI.tab==='completed'){ OrdersUI.renderCompleted(); return; }
+    const all = await Store.getAll('orders');
+    const drafts = all.filter(o=> o.status==='draft').sort((a,b)=> b.timestamp-a.timestamp);
+    const wrap = document.getElementById('ordersListWrap');
+    if(drafts.length===0){
+      wrap.innerHTML = '<div class="empty-note">No orders in progress. Tap "Start New Order" to begin.</div>';
+      return;
+    }
+    wrap.innerHTML = drafts.map(o=>{
+      const itemCount = (o.items||[]).reduce((s,it)=> s+it.qty, 0);
+      const customerLabel = o.customerName ? escapeHtml(o.customerName) : 'No customer selected yet';
+      const canInvoice = itemCount>0 && o.customerId;
+      return `
+      <div class="report-card">
+        <h3>${customerLabel}</h3>
+        <p>${itemCount} item${itemCount===1?'':'s'} · ${fmtMoney(o.subtotal||0)}</p>
+        <div class="backup-grid">
+          <button class="btn btn-primary" onclick="OrdersUI.edit(${o.id})">Continue / Edit</button>
+          <button class="btn btn-red" onclick="OrdersUI.remove(${o.id})">Delete</button>
+          ${canInvoice ? `<button class="btn btn-soft" style="grid-column:1/-1;" onclick="OrdersUI.edit(${o.id})">Review &amp; Send Invoice</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  // Completed (invoiced) orders — read-only except a code-confirmed Delete,
+  // for the rare case of a genuine duplicate/mistaken invoice. Deleting here
+  // DOES change revenue totals, so it's gated behind typing a confirm code
+  // rather than a plain OK/Cancel, so it can't happen by a stray tap.
+  async renderCompleted(){
+    const all = await Store.getAll('orders');
+    const completed = all.filter(o=> o.status !== 'draft').sort((a,b)=> b.timestamp-a.timestamp);
+    const wrap = document.getElementById('ordersListWrap');
+    if(completed.length===0){
+      wrap.innerHTML = '<div class="empty-note">No completed orders yet.</div>';
+      return;
+    }
+    wrap.innerHTML = completed.map(o=>{
+      const itemCount = (o.items||[]).reduce((s,it)=> s+it.qty, 0);
+      return `
+      <div class="report-card">
+        <h3>${escapeHtml(o.customerName)}</h3>
+        <p>${o.invoiceNumber} · ${itemCount} item${itemCount===1?'':'s'} · ${fmtMoney(o.grandTotal)} · ${o.dateDisplay||o.date||''}</p>
+        <button class="btn btn-red btn-block" onclick="OrdersUI.removeCompleted(${o.id})">Delete Invoice</button>
+      </div>`;
+    }).join('');
+  },
+
+  async removeCompleted(id){
+    const o = await Store.get('orders', id);
+    if(!o) return;
+    const code = prompt(`This permanently deletes invoice ${o.invoiceNumber} for ${o.customerName} (${fmtMoney(o.grandTotal)}) and reduces your revenue totals.\n\nType DELETE (all caps) to confirm:`);
+    if(code !== 'DELETE'){ Toast.show('Deletion cancelled — code did not match'); return; }
+    await Store.delete('orders', id);
+    Toast.show('Invoice deleted and revenue updated');
+    OrdersUI.renderCompleted();
+    Dashboard.render();
+  },
+
+  async edit(id){
+    const o = await Store.get('orders', id);
+    if(!o) return;
+    Cart.orderId = o.id;
+    Cart.customer = o.customerId ? {id:o.customerId, name:o.customerName, phone:o.customerPhone, area:o.customerArea} : null;
+    Cart.payment = o.payment || 'Cash';
+    Cart.items = {};
+    (o.items||[]).forEach(it=>{
+      Cart.items[it.id] = {item:{id:it.id, name:it.name, price:it.price, dietType:it.dietType}, qty:it.qty};
+    });
+    updateCartBadge();
+    Nav.go(o.customerId ? 'cart' : 'order-customer');
+  },
+
+  async remove(id){
+    if(!confirm('Delete this order? This only removes the in-progress order and never affects revenue, since it was never invoiced.')) return;
+    await Store.delete('orders', id);
+    if(Cart.orderId === id){
+      Cart.orderId = null; Cart.items = {}; Cart.customer = null; Cart.payment = 'Cash';
+      updateCartBadge();
+    }
+    Toast.show('Order deleted');
+    OrdersUI.render();
   }
 };
 
@@ -1230,11 +1380,13 @@ const OrderCustomerUI = {
     document.getElementById('orderCustomerResults').innerHTML='';
     OrderCustomerUI.render();
     Toast.show(c.name+' selected');
+    saveDraft();
   },
 
   clearCustomer(){
     Cart.customer = null;
     OrderCustomerUI.render();
+    saveDraft();
   },
 
   continue(){
@@ -1249,7 +1401,7 @@ const OrderCustomerUI = {
 const CustomerUI = {
   async render(){
     const all = await Store.getAll('customers');
-    const orders = await Store.getAll('orders');
+    const orders = (await Store.getAll('orders')).filter(o=> o.status !== 'draft');
     const q = (document.getElementById('custSearch').value||'').toLowerCase();
     const filtered = all.filter(c=> c.name.toLowerCase().includes(q) || c.phone.includes(q));
     const list = document.getElementById('customerList');
@@ -1352,7 +1504,7 @@ const CustomerUI = {
 
   async viewHistory(id){
     const c = await Store.get('customers', id);
-    const orders = (await Store.getAll('orders')).filter(o=> o.customerId===id).sort((a,b)=>b.timestamp-a.timestamp);
+    const orders = (await Store.getAll('orders')).filter(o=> o.customerId===id && o.status !== 'draft').sort((a,b)=>b.timestamp-a.timestamp);
     document.getElementById('historyModalTitle').textContent = c.name + "'s Orders";
     const content = document.getElementById('historyContent');
     if(orders.length===0){
@@ -1386,9 +1538,14 @@ const Invoice = {
     const tax = parseFloat(document.getElementById('taxInput').value) || 0;
     const grandTotal = Math.max(0, subtotal - discount + tax);
 
+    if(!Cart.orderId){ Toast.show('This order was not started properly. Please start a new order.'); return; }
+    if(!confirm('Generate invoice and mark this order as completed? Completed orders can no longer be edited or deleted.')) return;
+
     const invoiceNumber = await Settings.nextInvoiceNumber();
     const now = new Date();
     const order = {
+      id: Cart.orderId,
+      status: 'completed',
       invoiceNumber,
       customerId: Cart.customer.id,
       customerName: Cart.customer.name,
@@ -1402,15 +1559,17 @@ const Invoice = {
       dateDisplay: now.toLocaleDateString('en-IN') + ' ' + now.toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit'})
     };
 
-    const orderId = await Store.add('orders', order);
-    order.id = orderId;
+    // Overwrite the SAME draft record (by id) so finishing an order never
+    // creates a second, duplicate row that would double-count revenue.
+    await Store.put('orders', order);
 
     const pdfBlob = await Invoice.buildPDF(order);
 
-    // Reset cart
+    // Reset cart / draft tracking
     Cart.items = {};
     Cart.customer = null;
     Cart.payment = 'Cash';
+    Cart.orderId = null;
     document.getElementById('discountInput').value = 0;
     document.getElementById('taxInput').value = 0;
     updateCartBadge();
@@ -1534,7 +1693,13 @@ const Invoice = {
     doc.setFont('helvetica','bold');
     doc.setFontSize(10);
     doc.setTextColor(...orange);
-    doc.text('For any queries, contact us at +91 90305 53879 (Nagamalla Siva Kumar/pandu)', 297, y, {align:'center'});
+    doc.text('For any queries, contact us at +91 9030553879 , Nagamalla Siva Kumar(Pandu)', 297, y, {align:'center'});
+
+    y += 18;
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(10);
+    doc.setTextColor(41,76,121);
+    doc.text('For any queries, contact us at +91 9030553879 , Nagamalla Siva Kumar(Pandu)', 297, y, {align:'center'});
 
     const blob = doc.output('blob');
     doc._filename = order.invoiceNumber + '.pdf';
@@ -1543,26 +1708,43 @@ const Invoice = {
   },
 
   async shareWhatsApp(order, doc){
-    const message = `Hello ${order.customerName},\n\nThank you for visiting SV FOOD HUB.\nYour invoice number is ${order.invoiceNumber}.\nTotal Amount : ${fmtMoney(order.grandTotal)}\n\nThank you.`;
+    const message = `Hello ${order.customerName},\n\nThank you for visiting SV FOOD HUB.\nYour invoice number is ${order.invoiceNumber}.\nTotal Amount : ${fmtMoney(order.grandTotal)}\n\nHope you visit again`;
     const phoneDigits = (order.customerPhone||'').replace(/\D/g,'');
     const waPhone = phoneDigits.length===10 ? '91'+phoneDigits : phoneDigits;
-
     const filename = order.invoiceNumber + '.pdf';
     const blob = doc._blob;
-    const file = new File([blob], filename, {type:'application/pdf'});
+    const file = blob ? new File([blob], filename, {type:'application/pdf'}) : null;
+    const canFileShare = !!(file && navigator.canShare && navigator.canShare({files:[file]}));
 
-    if(navigator.canShare && navigator.canShare({files:[file]})){
-      try{
-        await navigator.share({files:[file], title:filename, text:message});
-        return;
-      }catch(err){
-        // fall through to download + whatsapp link
-      }
+    doc.save(filename); // always keep a saved copy as backup
+
+    if(!waPhone){
+      Toast.show('No phone number on file for this customer — invoice saved only.');
+      return;
     }
 
-    doc.save(filename);
+    // Step 1: open that exact customer's chat directly, with the message pre-filled.
+    Toast.show('Opening ' + order.customerName + '\u2019s WhatsApp chat...');
     const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(message)}`;
-    setTimeout(()=> window.open(waUrl,'_blank'), 400);
+    window.open(waUrl, '_blank');
+
+    if(!canFileShare) return; // no way to auto-attach on this device — the saved PDF is the fallback
+
+    // Step 2: once the person comes back to this tab (after sending the message
+    // in WhatsApp), prompt to attach the invoice and open the share sheet so
+    // they can pick where it goes (e.g. that same recent WhatsApp chat).
+    const onReturn = async ()=>{
+      if(document.visibilityState !== 'visible') return;
+      document.removeEventListener('visibilitychange', onReturn);
+      const wantsAttach = confirm(`Back from WhatsApp?\n\nAttach the invoice PDF for ${order.customerName} now?`);
+      if(!wantsAttach) return;
+      try{
+        await navigator.share({files:[file], title:filename, text:message});
+      }catch(err){
+        // share sheet dismissed/cancelled — the saved PDF from step 1 is still there to attach manually
+      }
+    };
+    document.addEventListener('visibilitychange', onReturn);
   }
 };
 
@@ -1571,7 +1753,7 @@ const Invoice = {
    ========================================================= */
 const DayEnd = {
   async run(){
-    const orders = await Store.getAll('orders');
+    const orders = (await Store.getAll('orders')).filter(o=> o.status !== 'draft');
     const today = todayStr();
     const todayOrders = orders.filter(o=> o.date===today);
 
