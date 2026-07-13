@@ -1708,7 +1708,7 @@ const Invoice = {
   },
 
   async shareWhatsApp(order, doc){
-    const message = `Hello ${order.customerName},\n\nThank you for visiting SV FOOD HUB.\nYour invoice number is ${order.invoiceNumber}.\nTotal Amount : ${fmtMoney(order.grandTotal)}\n\nHope you visit again`;
+    const message = `Hello ${order.customerName},\n\nThank you for visiting SV FOOD HUB.\nYour invoice number is ${order.invoiceNumber}.\nTotal Amount : ${fmtMoney(order.grandTotal)}\n\nHope you would visit soon.`;
     const phoneDigits = (order.customerPhone||'').replace(/\D/g,'');
     const waPhone = phoneDigits.length===10 ? '91'+phoneDigits : phoneDigits;
     const filename = order.invoiceNumber + '.pdf';
@@ -1733,9 +1733,20 @@ const Invoice = {
     // Step 2: once the person comes back to this tab (after sending the message
     // in WhatsApp), prompt to attach the invoice and open the share sheet so
     // they can pick where it goes (e.g. that same recent WhatsApp chat).
-    const onReturn = async ()=>{
+    // NOTE: we require a genuine "went hidden, then came back" round trip
+    // (with a minimum time away) — otherwise a brief visibility flicker right
+    // when the WhatsApp link opens can fire this prematurely and use up the
+    // one-time listener before you've actually returned.
+    let becameHiddenAt = null;
+    const MIN_AWAY_MS = 800;
+    const onVisibility = async ()=>{
+      if(document.visibilityState === 'hidden'){
+        becameHiddenAt = Date.now();
+        return;
+      }
       if(document.visibilityState !== 'visible') return;
-      document.removeEventListener('visibilitychange', onReturn);
+      if(!becameHiddenAt || (Date.now() - becameHiddenAt) < MIN_AWAY_MS) return; // ignore spurious instant flicker
+      document.removeEventListener('visibilitychange', onVisibility);
       const wantsAttach = confirm(`Back from WhatsApp?\n\nAttach the invoice PDF for ${order.customerName} now?`);
       if(!wantsAttach) return;
       try{
@@ -1744,7 +1755,7 @@ const Invoice = {
         // share sheet dismissed/cancelled — the saved PDF from step 1 is still there to attach manually
       }
     };
-    document.addEventListener('visibilitychange', onReturn);
+    document.addEventListener('visibilitychange', onVisibility);
   }
 };
 
