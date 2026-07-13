@@ -4,13 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>SV FOOD HUB - Restaurant Billing</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#FF6B2C">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="SV Food Hub">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{
@@ -1530,6 +1523,12 @@ const Invoice = {
     doc.setTextColor(...dark);
     doc.text('Thank You! Visit Again.', 297, y, {align:'center'});
 
+    y += 18;
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...orange);
+    doc.text('For any queries, contact us at +91 90305 53879 [N Siva Kumar(pandu)]', 297, y, {align:'center'});
+
     const blob = doc.output('blob');
     doc._filename = order.invoiceNumber + '.pdf';
     doc._blob = blob;
@@ -1798,12 +1797,6 @@ window.addEventListener('DOMContentLoaded', async ()=>{
   Dashboard.render();
   MenuUI.render();
 });
-
-if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('sw.js').catch(err=>console.warn('SW registration failed:', err));
-  });
-}
 </script>
 </body>
 </html>
