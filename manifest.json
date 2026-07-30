@@ -2,7 +2,7 @@
   "name": "SV Food Hub",
   "short_name": "SV Food Hub",
   "description": "Restaurant billing and POS system for SV Food Hub",
-  "start_url": "./food_hub.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#FFF7ED",
